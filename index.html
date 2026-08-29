@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>しょぼんめーかー 職人チャット</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  .hidden { display: none !important; }
+
+  /* ログイン画面 */
+  #login-screen { max-width: 360px; margin: 4rem auto; padding: 1.5rem; }
+  #login-screen h1 { font-size: 1.2rem; margin-bottom: 1.5rem; text-align: center; }
+  #login-screen label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.3rem; margin-top: 1rem; }
+  #login-screen label:first-of-type { margin-top: 0; }
+  #login-screen input { width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.95rem; }
+  #login-screen button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border-radius: 8px; border: none; background: #6366f1; color: #fff; font-weight: 600; cursor: pointer; }
+  #login-error { margin-top: 0.75rem; font-size: 0.85rem; color: #fca5a5; }
+
+  /* チャット画面 */
+  #chat-screen { display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid #334155; }
+  header .me { font-size: 0.9rem; color: #94a3b8; }
+  header button { background: none; border: 1px solid #475569; color: #e2e8f0; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+
+  nav { display: flex; border-bottom: 1px solid #334155; }
+  nav button { flex: 1; padding: 0.6rem; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; }
+  nav button.active { color: #e2e8f0; border-bottom-color: #6366f1; }
+
+  main { flex: 1; overflow: hidden; display: flex; }
+
+  /* 全体チャット */
+  #global-view, #dm-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* DMリスト */
+  #dm-list { width: 200px; border-right: 1px solid #334155; overflow-y: auto; flex-shrink: 0; }
+  #dm-list .partner { padding: 0.7rem 0.9rem; cursor: pointer; font-size: 0.85rem; border-bottom: 1px solid #1e293b; }
+  #dm-list .partner:hover, #dm-list .partner.active { background: #1e293b; }
+  #dm-list .empty { padding: 0.9rem; font-size: 0.8rem; color: #64748b; }
+  #dm-new { display: flex; padding: 0.5rem; gap: 0.4rem; border-bottom: 1px solid #334155; }
+  #dm-new input { flex: 1; padding: 0.4rem 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.8rem; }
+  #dm-new button { padding: 0.4rem 0.6rem; border-radius: 6px; border: none; background: #334155; color: #e2e8f0; font-size: 0.8rem; cursor: pointer; }
+  #dm-thread { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #dm-thread-header { padding: 0.6rem 0.9rem; border-bottom: 1px solid #334155; font-size: 0.85rem; color: #94a3b8; }
+
+  .messages { flex: 1; overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .msg { max-width: 80%; }
+  .msg .author { font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.15rem; }
+  .msg .bubble { background: #1e293b; padding: 0.5rem 0.7rem; border-radius: 8px; font-size: 0.9rem; word-break: break-word; white-space: pre-wrap; }
+  .msg.self .bubble { background: #4338ca; }
+  .msg .report-link { font-size: 0.7rem; color: #64748b; cursor: pointer; margin-top: 0.15rem; }
+  .msg .report-link:hover { color: #f87171; }
+
+  .composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #334155; }
+  .composer textarea { flex: 1; resize: none; padding: 0.5rem 0.7rem; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.9rem; font-family: inherit; height: 2.4rem; }
+  .composer button { padding: 0 1rem; border-radius: 8px; border: none; background: #6366f1; color: #fff; font-weight: 600; cursor: pointer; }
+  .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  #chat-toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: #334155; color: #e2e8f0; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; display: none; }
+</style>
+</head>
+<body>
+
+  <!-- ログイン画面 -->
+  <div id="login-screen">
+    <h1>職人チャット ログイン</h1>
+    <label>職人名 (author)</label>
+    <input id="login-author" type="text" placeholder="職人名">
+    <label>パスワード</label>
+    <input id="login-password" type="password" placeholder="パスワード">
+    <button onclick="doLogin()">ログイン</button>
+    <div id="login-error"></div>
+  </div>
+
+  <!-- チャット画面 -->
+  <div id="chat-screen" class="hidden">
+    <header>
+      <div class="me">ログイン中: <span id="me-name"></span></div>
+      <button onclick="doLogout()">ログアウト</button>
+    </header>
+    <nav>
+      <button id="tab-global" class="active" onclick="switchTab('global')">全体チャット</button>
+      <button id="tab-dm" onclick="switchTab('dm')">DM</button>
+    </nav>
+    <main>
+      <!-- 全体チャット -->
+      <div id="global-view">
+        <div id="global-messages" class="messages"></div>
+        <div class="composer">
+          <textarea id="global-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300"></textarea>
+          <button onclick="sendGlobal()">送信</button>
+        </div>
+      </div>
+
+      <!-- DM -->
+      <div id="dm-view" class="hidden">
+        <div id="dm-list">
+          <div id="dm-new">
+            <input id="dm-new-author" type="text" placeholder="職人名で開始">
+            <button onclick="openDM(document.getElementById('dm-new-author').value.trim())">開く</button>
+          </div>
+          <div id="dm-partners"></div>
+        </div>
+        <div id="dm-thread">
+          <div id="dm-thread-header">相手を選択してください</div>
+          <div id="dm-messages" class="messages"></div>
+          <div class="composer">
+            <textarea id="dm-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300" disabled></textarea>
+            <button id="dm-send-btn" onclick="sendDM()" disabled>送信</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="chat-toast"></div>
+
+<script>
+  const API_BASE = "https://cmm-server.onrender.com";
+
+  let token = localStorage.getItem("chat_token") || null;
+  let myAuthor = localStorage.getItem("chat_author") || null;
+
+  let globalAfterId = 0;
+  let dmAfterId = 0;
+  let currentDMPartner = null;
+  let globalPollTimer = null;
+  let dmPollTimer = null;
+  let dmPartnersPollTimer = null;
+
+  function showToast(text) {
+    const t = document.getElementById("chat-toast");
+    t.textContent = text;
+    t.style.display = "block";
+    setTimeout(() => { t.style.display = "none"; }, 2500);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatTime(unixSeconds) {
+    return new Date(unixSeconds * 1000).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function apiFetch(path, options = {}) {
+    const headers = options.headers || {};
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body) headers["Content-Type"] = "application/json";
+    const res = await fetch(API_BASE + path, { ...options, headers });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (res.status === 401) {
+      doLogout(false);
+      showToast("ログインが必要です");
+      return null;
+    }
+    if (res.status === 403) {
+      showToast("あなたはチャットを利用できません（BAN中の可能性があります）");
+      return null;
+    }
+    if (!res.ok) {
+      showToast((data && data.error) || "エラーが発生しました");
+      return null;
+    }
+    return data;
+  }
+
+  // ── ログイン ──
+  async function doLogin() {
+    const author = document.getElementById("login-author").value.trim();
+    const password = document.getElementById("login-password").value;
+    if (!author || !password) {
+      document.getElementById("login-error").textContent = "職人名とパスワードを入力してください";
+      return;
+    }
+    const res = await fetch(API_BASE + "/api/chat/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ author, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msgs = { not_registered: "職人登録されていません", invalid_password: "パスワードが違います", banned: "あなたはチャットを利用できません" };
+      document.getElementById("login-error").textContent = msgs[data.error] || "ログインに失敗しました";
+      return;
+    }
+    token = data.token;
+    myAuthor = data.author;
+    localStorage.setItem("chat_token", token);
+    localStorage.setItem("chat_author", myAuthor);
+    enterChat();
+  }
+
+  async function doLogout(callApi = true) {
+    if (callApi && token) {
+      await fetch(API_BASE + "/api/chat/logout", { method: "POST", headers: { "Authorization": "Bearer " + token } }).catch(() => {});
+    }
+    token = null; myAuthor = null;
+    localStorage.removeItem("chat_token");
+    localStorage.removeItem("chat_author");
+    clearInterval(globalPollTimer); clearInterval(dmPollTimer); clearInterval(dmPartnersPollTimer);
+    document.getElementById("chat-screen").classList.add("hidden");
+    document.getElementById("login-screen").classList.remove("hidden");
+  }
+
+  function enterChat() {
+    document.getElementById("login-screen").classList.add("hidden");
+    document.getElementById("chat-screen").classList.remove("hidden");
+    document.getElementById("me-name").textContent = myAuthor;
+    globalAfterId = 0;
+    document.getElementById("global-messages").innerHTML = "";
+    pollGlobal();
+    globalPollTimer = setInterval(pollGlobal, 3000);
+    pollDMPartners();
+    dmPartnersPollTimer = setInterval(pollDMPartners, 5000);
+  }
+
+  // ── タブ切り替え ──
+  function switchTab(tab) {
+    document.getElementById("tab-global").classList.toggle("active", tab === "global");
+    document.getElementById("tab-dm").classList.toggle("active", tab === "dm");
+    document.getElementById("global-view").classList.toggle("hidden", tab !== "global");
+    document.getElementById("dm-view").classList.toggle("hidden", tab !== "dm");
+  }
+
+  // ── 全体チャット ──
+  function renderMessage(container, msg, selfAuthor) {
+    const div = document.createElement("div");
+    div.className = "msg" + (msg.author === selfAuthor || msg.from === selfAuthor ? " self" : "");
+    const who = msg.author || msg.from;
+    const canReport = who !== selfAuthor;
+    div.innerHTML = `
+      <div class="author">${escapeHtml(who)} ・ ${formatTime(msg.created_at)}</div>
+      <div class="bubble">${escapeHtml(msg.text)}</div>
+      ${canReport ? `<div class="report-link" data-author="${escapeHtml(who)}">通報する</div>` : ""}
+    `;
+    container.appendChild(div);
+    if (canReport) {
+      div.querySelector(".report-link").addEventListener("click", () => reportUser(who));
+    }
+  }
+
+  async function pollGlobal() {
+    const data = await apiFetch("/api/chat/messages?after=" + globalAfterId);
+    if (!data || !data.messages.length) return;
+    const container = document.getElementById("global-messages");
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+    for (const msg of data.messages) {
+      renderMessage(container, msg, myAuthor);
+      globalAfterId = Math.max(globalAfterId, msg.id);
+    }
+    if (atBottom || globalAfterId === data.messages[data.messages.length - 1].id) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
+  async function sendGlobal() {
+    const input = document.getElementById("global-input");
+    const text = input.value.trim();
+    if (!text) return;
+    const data = await apiFetch("/api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
+    if (data && data.ok) {
+      input.value = "";
+      pollGlobal();
+    }
+  }
+
+  // ── DM ──
+  async function pollDMPartners() {
+    const data = await apiFetch("/api/chat/dm/partners");
+    if (!data) return;
+    const list = document.getElementById("dm-partners");
+    list.innerHTML = "";
+    if (!data.partners.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "まだDMがありません";
+      list.appendChild(empty);
+      return;
+    }
+    for (const p of data.partners) {
+      const div = document.createElement("div");
+      div.className = "partner" + (p.author === currentDMPartner ? " active" : "");
+      div.textContent = p.author;
+      div.addEventListener("click", () => openDM(p.author));
+      list.appendChild(div);
+    }
+  }
+
+  async function openDM(author) {
+    if (!author) return;
+    currentDMPartner = author;
+    dmAfterId = 0;
+    document.getElementById("dm-thread-header").textContent = author + " とのDM";
+    document.getElementById("dm-messages").innerHTML = "";
+    document.getElementById("dm-input").disabled = false;
+    document.getElementById("dm-send-btn").disabled = false;
+    clearInterval(dmPollTimer);
+    await pollDM();
+    dmPollTimer = setInterval(pollDM, 3000);
+    pollDMPartners();
+  }
+
+  async function pollDM() {
+    if (!currentDMPartner) return;
+    const data = await apiFetch("/api/chat/dm/messages?with=" + encodeURIComponent(currentDMPartner) + "&after=" + dmAfterId);
+    if (!data || !data.messages.length) return;
+    const container = document.getElementById("dm-messages");
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+    for (const msg of data.messages) {
+      renderMessage(container, msg, myAuthor);
+      dmAfterId = Math.max(dmAfterId, msg.id);
+    }
+    if (atBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendDM() {
+    if (!currentDMPartner) return;
+    const input = document.getElementById("dm-input");
+    const text = input.value.trim();
+    if (!text) return;
+    const data = await apiFetch("/api/chat/dm/send", { method: "POST", body: JSON.stringify({ to: currentDMPartner, text }) });
+    if (data && data.ok) {
+      input.value = "";
+      pollDM();
+    }
+  }
+
+  // ── 通報 ──
+  async function reportUser(target) {
+    const reason = prompt(target + " を通報する理由を入力してください:");
+    if (!reason) return;
+    const data = await apiFetch("/api/chat/report", { method: "POST", body: JSON.stringify({ target_author: target, reason }) });
+    if (data && data.ok) showToast("通報しました");
+  }
+
+  // Enterで送信（Shift+Enterで改行）
+  document.getElementById("global-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendGlobal(); }
+  });
+  document.getElementById("dm-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDM(); }
+  });
+
+  // 初期化: トークンがあれば自動ログイン
+  if (token && myAuthor) {
+    enterChat();
+  }
+</script>
+</body>
+</html>
