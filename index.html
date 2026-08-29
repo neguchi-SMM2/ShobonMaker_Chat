@@ -78,6 +78,19 @@
   #dm-thread-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   #dm-thread-header { padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; color: var(--text-sub); display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
   #dm-back-btn { display: none; background: none; border: none; color: var(--text-sub); font-size: 1rem; cursor: pointer; padding: 0; }
+  #dm-thread-title { flex: 1; }
+  #dm-block-toggle-btn { background: none; border: 1px solid var(--border); color: var(--text-sub); font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; }
+  #dm-block-toggle-btn.is-blocked { color: var(--danger); border-color: var(--danger); }
+
+  /* ブロック管理パネル */
+  #block-panel-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  #block-panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; width: 320px; max-height: 70vh; display: flex; flex-direction: column; }
+  #block-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.95rem; font-weight: 600; }
+  #block-panel-header button { background: none; border: none; color: var(--text-sub); font-size: 1rem; cursor: pointer; }
+  #block-panel-list { overflow-y: auto; padding: 0.5rem; }
+  #block-panel-list .block-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.7rem; font-size: 0.85rem; border-bottom: 1px solid var(--border); }
+  #block-panel-list .block-row button { background: var(--border); border: none; color: var(--text); font-size: 0.75rem; padding: 0.3rem 0.7rem; border-radius: 6px; cursor: pointer; }
+  #block-panel-list .empty { padding: 1rem; font-size: 0.85rem; color: var(--text-faint); text-align: center; }
 
   .messages { flex: 1; overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
   .msg { max-width: 78%; display: flex; flex-direction: column; align-self: flex-start; }
@@ -124,6 +137,7 @@
     <header>
       <div class="me">ログイン中: <span id="me-name"></span></div>
       <div class="header-actions">
+        <button onclick="openBlockPanel()">🚫 ブロック管理</button>
         <button onclick="toggleTheme()">🌓 テーマ切替</button>
         <button onclick="doLogout()">ログアウト</button>
       </div>
@@ -155,6 +169,7 @@
           <div id="dm-thread-header">
             <button id="dm-back-btn" onclick="closeDMThread()">←</button>
             <span id="dm-thread-title">相手を選択してください</span>
+            <button id="dm-block-toggle-btn" class="hidden" onclick="toggleDMBlock()"></button>
           </div>
           <div id="dm-messages" class="messages"></div>
           <div class="composer">
@@ -168,8 +183,18 @@
 
   <div id="chat-toast"></div>
 
+  <!-- ブロック管理パネル -->
+  <div id="block-panel-overlay" class="hidden">
+    <div id="block-panel">
+      <div id="block-panel-header">
+        <span>ブロック管理</span>
+        <button onclick="closeBlockPanel()">✕</button>
+      </div>
+      <div id="block-panel-list"></div>
+    </div>
+  </div>
+
 <script>
-  // Renderにデプロイしたサーバーの絶対URLに変更してください
   const API_BASE = "https://cmm-server.onrender.com";
 
   let token = localStorage.getItem("chat_token") || null;
@@ -304,13 +329,43 @@
     if (data && data.ok) blockedSet = new Set(data.blocked);
   }
 
+  function openBlockPanel() {
+    renderBlockPanelList();
+    document.getElementById("block-panel-overlay").classList.remove("hidden");
+  }
+
+  function closeBlockPanel() {
+    document.getElementById("block-panel-overlay").classList.add("hidden");
+  }
+
+  function renderBlockPanelList() {
+    const list = document.getElementById("block-panel-list");
+    list.innerHTML = "";
+    if (blockedSet.size === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "ブロック中の職人はいません";
+      list.appendChild(empty);
+      return;
+    }
+    for (const author of blockedSet) {
+      const row = document.createElement("div");
+      row.className = "block-row";
+      row.innerHTML = `<span>${escapeHtml(author)}</span><button>解除</button>`;
+      row.querySelector("button").addEventListener("click", () => unblockUser(author));
+      list.appendChild(row);
+    }
+  }
+
   async function blockUser(target) {
-    if (!confirm(target + " をブロックしますか？ 全体チャットでこの職人のメッセージが表示されなくなります。")) return;
+    if (!confirm(target + " をブロックしますか？ 全体チャット・DMでこの職人のメッセージが表示されなくなります。")) return;
     const data = await apiFetch("/api/chat/block", { method: "POST", body: JSON.stringify({ target_author: target }) });
     if (data && data.ok) {
       blockedSet.add(target);
       // 既に表示中のメッセージも除去
       document.querySelectorAll(`.msg[data-author="${cssEscape(target)}"]`).forEach(el => el.remove());
+      if (currentDMPartner === target) updateDMBlockButton();
+      renderBlockPanelList();
       showToast(target + " をブロックしました");
     }
   }
@@ -319,6 +374,11 @@
     const data = await apiFetch("/api/chat/unblock", { method: "POST", body: JSON.stringify({ target_author: target }) });
     if (data && data.ok) {
       blockedSet.delete(target);
+      if (currentDMPartner === target) {
+        updateDMBlockButton();
+        await pollDM(); // ブロック解除後、過去に受信済みだった未表示分を再取得したいので念のため再ポーリング
+      }
+      renderBlockPanelList();
       showToast(target + " のブロックを解除しました");
     }
   }
@@ -330,7 +390,7 @@
   // ── メッセージ描画 ──
   function renderMessage(container, msg, selfAuthor, kind) {
     const who = msg.author || msg.from;
-    if (kind === "global" && blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は表示しない
+    if (blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は全体チャット・DMどちらも表示しない
 
     const isSelf = who === selfAuthor;
     const div = document.createElement("div");
@@ -343,9 +403,7 @@
       actions.push(`<span class="action-link" data-act="delete">削除</span>`);
     } else {
       actions.push(`<span class="action-link" data-act="report">通報</span>`);
-      if (kind === "global") {
-        actions.push(`<span class="action-link" data-act="block">ブロック</span>`);
-      }
+      actions.push(`<span class="action-link" data-act="block">ブロック</span>`);
     }
 
     div.innerHTML = `
@@ -439,10 +497,29 @@
     document.getElementById("dm-input").disabled = false;
     document.getElementById("dm-send-btn").disabled = false;
     document.getElementById("dm-view").classList.add("show-thread"); // モバイル用
+    updateDMBlockButton();
     clearInterval(dmPollTimer);
     await pollDM();
     dmPollTimer = setInterval(pollDM, 3000);
     pollDMPartners();
+  }
+
+  function updateDMBlockButton() {
+    const btn = document.getElementById("dm-block-toggle-btn");
+    if (!currentDMPartner) { btn.classList.add("hidden"); return; }
+    btn.classList.remove("hidden");
+    const isBlocked = blockedSet.has(currentDMPartner);
+    btn.textContent = isBlocked ? "ブロック中（解除）" : "ブロックする";
+    btn.classList.toggle("is-blocked", isBlocked);
+  }
+
+  async function toggleDMBlock() {
+    if (!currentDMPartner) return;
+    if (blockedSet.has(currentDMPartner)) {
+      await unblockUser(currentDMPartner);
+    } else {
+      await blockUser(currentDMPartner);
+    }
   }
 
   function closeDMThread() {
