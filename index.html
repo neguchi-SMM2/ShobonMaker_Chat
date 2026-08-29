@@ -3,61 +3,107 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>しょぼんめーかー 職人チャット</title>
+<title>職人チャット</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+  :root {
+    --bg: #0f172a;
+    --bg-panel: #1e293b;
+    --bg-input: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-sub: #94a3b8;
+    --text-faint: #64748b;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --bubble-self: #4338ca;
+    --bubble-other: #1e293b;
+    --danger: #f87171;
+  }
+  body.light {
+    --bg: #f8fafc;
+    --bg-panel: #ffffff;
+    --bg-input: #ffffff;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text-sub: #64748b;
+    --text-faint: #94a3b8;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --bubble-self: #6366f1;
+    --bubble-other: #eef2ff;
+    --danger: #dc2626;
+  }
+
+  body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; transition: background 0.2s, color 0.2s; }
   .hidden { display: none !important; }
 
   /* ログイン画面 */
   #login-screen { max-width: 360px; margin: 4rem auto; padding: 1.5rem; }
   #login-screen h1 { font-size: 1.2rem; margin-bottom: 1.5rem; text-align: center; }
-  #login-screen label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.3rem; margin-top: 1rem; }
+  #login-screen label { display: block; font-size: 0.85rem; color: var(--text-sub); margin-bottom: 0.3rem; margin-top: 1rem; }
   #login-screen label:first-of-type { margin-top: 0; }
-  #login-screen input { width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.95rem; }
-  #login-screen button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border-radius: 8px; border: none; background: #6366f1; color: #fff; font-weight: 600; cursor: pointer; }
-  #login-error { margin-top: 0.75rem; font-size: 0.85rem; color: #fca5a5; }
+  #login-screen input { width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.95rem; }
+  #login-screen button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  #login-error { margin-top: 0.75rem; font-size: 0.85rem; color: var(--danger); }
 
   /* チャット画面 */
   #chat-screen { display: flex; flex-direction: column; height: 100vh; }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid #334155; }
-  header .me { font-size: 0.9rem; color: #94a3b8; }
-  header button { background: none; border: 1px solid #475569; color: #e2e8f0; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  header .me { font-size: 0.9rem; color: var(--text-sub); }
+  header .header-actions { display: flex; gap: 0.5rem; }
+  header button { background: none; border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 
-  nav { display: flex; border-bottom: 1px solid #334155; }
-  nav button { flex: 1; padding: 0.6rem; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; }
-  nav button.active { color: #e2e8f0; border-bottom-color: #6366f1; }
+  nav { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  nav button { flex: 1; padding: 0.6rem; background: none; border: none; color: var(--text-sub); cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
 
   main { flex: 1; overflow: hidden; display: flex; }
 
   /* 全体チャット */
-  #global-view, #dm-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #global-view, #dm-view { flex: 1; display: flex; overflow: hidden; }
+  #global-view { flex-direction: column; }
 
-  /* DMリスト */
-  #dm-list { width: 200px; border-right: 1px solid #334155; overflow-y: auto; flex-shrink: 0; }
-  #dm-list .partner { padding: 0.7rem 0.9rem; cursor: pointer; font-size: 0.85rem; border-bottom: 1px solid #1e293b; }
-  #dm-list .partner:hover, #dm-list .partner.active { background: #1e293b; }
-  #dm-list .empty { padding: 0.9rem; font-size: 0.8rem; color: #64748b; }
-  #dm-new { display: flex; padding: 0.5rem; gap: 0.4rem; border-bottom: 1px solid #334155; }
-  #dm-new input { flex: 1; padding: 0.4rem 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.8rem; }
-  #dm-new button { padding: 0.4rem 0.6rem; border-radius: 6px; border: none; background: #334155; color: #e2e8f0; font-size: 0.8rem; cursor: pointer; }
-  #dm-thread { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  #dm-thread-header { padding: 0.6rem 0.9rem; border-bottom: 1px solid #334155; font-size: 0.85rem; color: #94a3b8; }
+  /* DM: 左に職人一覧、右にメッセージ */
+  #dm-list-pane { width: 240px; flex-shrink: 0; border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+  #dm-new { display: flex; padding: 0.6rem; gap: 0.4rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  #dm-new input { flex: 1; padding: 0.4rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.8rem; min-width: 0; }
+  #dm-new button { padding: 0.4rem 0.6rem; border-radius: 6px; border: none; background: var(--border); color: var(--text); font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
+  #dm-partners { flex: 1; overflow-y: auto; }
+  #dm-partners .partner { padding: 0.7rem 0.9rem; cursor: pointer; font-size: 0.85rem; border-bottom: 1px solid var(--border); }
+  #dm-partners .partner:hover, #dm-partners .partner.active { background: var(--bg-panel); }
+  #dm-partners .empty { padding: 0.9rem; font-size: 0.8rem; color: var(--text-faint); }
 
-  .messages { flex: 1; overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-  .msg { max-width: 80%; }
-  .msg .author { font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.15rem; }
-  .msg .bubble { background: #1e293b; padding: 0.5rem 0.7rem; border-radius: 8px; font-size: 0.9rem; word-break: break-word; white-space: pre-wrap; }
-  .msg.self .bubble { background: #4338ca; }
-  .msg .report-link { font-size: 0.7rem; color: #64748b; cursor: pointer; margin-top: 0.15rem; }
-  .msg .report-link:hover { color: #f87171; }
+  #dm-thread-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  #dm-thread-header { padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; color: var(--text-sub); display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+  #dm-back-btn { display: none; background: none; border: none; color: var(--text-sub); font-size: 1rem; cursor: pointer; padding: 0; }
 
-  .composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #334155; }
-  .composer textarea { flex: 1; resize: none; padding: 0.5rem 0.7rem; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.9rem; font-family: inherit; height: 2.4rem; }
-  .composer button { padding: 0 1rem; border-radius: 8px; border: none; background: #6366f1; color: #fff; font-weight: 600; cursor: pointer; }
+  .messages { flex: 1; overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+  .msg { max-width: 78%; display: flex; flex-direction: column; align-self: flex-start; }
+  .msg.self { align-self: flex-end; align-items: flex-end; }
+  .msg .meta { font-size: 0.72rem; color: var(--text-sub); margin-bottom: 0.15rem; display: flex; gap: 0.4rem; }
+  .msg .bubble { background: var(--bubble-other); padding: 0.5rem 0.7rem; border-radius: 10px; font-size: 0.9rem; word-break: break-word; white-space: pre-wrap; }
+  .msg.self .bubble { background: var(--bubble-self); color: #fff; }
+  .msg .actions-row { display: flex; gap: 0.6rem; margin-top: 0.15rem; }
+  .msg .action-link { font-size: 0.7rem; color: var(--text-faint); cursor: pointer; }
+  .msg .action-link:hover { color: var(--danger); }
+  .msg.deleted .bubble { opacity: 0.5; font-style: italic; }
+
+  .composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .composer textarea { flex: 1; resize: none; padding: 0.5rem 0.7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.9rem; font-family: inherit; height: 2.4rem; }
+  .composer button { padding: 0 1rem; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
   .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  #chat-toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: #334155; color: #e2e8f0; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; display: none; }
+  #chat-toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: var(--border); color: var(--text); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; display: none; z-index: 50; }
+
+  /* モバイル: DMは一覧⇄スレッドを切り替え表示 */
+  @media (max-width: 700px) {
+    #dm-view.show-thread #dm-list-pane { display: none; }
+    #dm-view:not(.show-thread) #dm-thread-pane { display: none; }
+    #dm-view.show-thread #dm-back-btn { display: inline-block; }
+    #dm-list-pane { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -77,7 +123,10 @@
   <div id="chat-screen" class="hidden">
     <header>
       <div class="me">ログイン中: <span id="me-name"></span></div>
-      <button onclick="doLogout()">ログアウト</button>
+      <div class="header-actions">
+        <button onclick="toggleTheme()">🌓 テーマ切替</button>
+        <button onclick="doLogout()">ログアウト</button>
+      </div>
     </header>
     <nav>
       <button id="tab-global" class="active" onclick="switchTab('global')">全体チャット</button>
@@ -89,21 +138,24 @@
         <div id="global-messages" class="messages"></div>
         <div class="composer">
           <textarea id="global-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300"></textarea>
-          <button onclick="sendGlobal()">送信</button>
+          <button id="global-send-btn" onclick="sendGlobal()">送信</button>
         </div>
       </div>
 
-      <!-- DM -->
+      <!-- DM: 左=一覧 / 右=メッセージ -->
       <div id="dm-view" class="hidden">
-        <div id="dm-list">
+        <div id="dm-list-pane">
           <div id="dm-new">
             <input id="dm-new-author" type="text" placeholder="職人名で開始">
             <button onclick="openDM(document.getElementById('dm-new-author').value.trim())">開く</button>
           </div>
           <div id="dm-partners"></div>
         </div>
-        <div id="dm-thread">
-          <div id="dm-thread-header">相手を選択してください</div>
+        <div id="dm-thread-pane">
+          <div id="dm-thread-header">
+            <button id="dm-back-btn" onclick="closeDMThread()">←</button>
+            <span id="dm-thread-title">相手を選択してください</span>
+          </div>
           <div id="dm-messages" class="messages"></div>
           <div class="composer">
             <textarea id="dm-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300" disabled></textarea>
@@ -117,7 +169,8 @@
   <div id="chat-toast"></div>
 
 <script>
-  const API_BASE = "https://cmm-server.onrender.com";
+  // Renderにデプロイしたサーバーの絶対URLに変更してください
+  const API_BASE = "https://あなたのサーバー.onrender.com";
 
   let token = localStorage.getItem("chat_token") || null;
   let myAuthor = localStorage.getItem("chat_author") || null;
@@ -128,6 +181,23 @@
   let globalPollTimer = null;
   let dmPollTimer = null;
   let dmPartnersPollTimer = null;
+  let blockedSet = new Set();
+
+  // 二重送信防止フラグ
+  let sendingGlobal = false;
+  let sendingDM = false;
+
+  // ── テーマ ──
+  function applyTheme(theme) {
+    document.body.classList.toggle("light", theme === "light");
+  }
+  function toggleTheme() {
+    const current = localStorage.getItem("chat_theme") === "light" ? "light" : "dark";
+    const next = current === "light" ? "dark" : "light";
+    localStorage.setItem("chat_theme", next);
+    applyTheme(next);
+  }
+  applyTheme(localStorage.getItem("chat_theme") === "light" ? "light" : "dark");
 
   function showToast(text) {
     const t = document.getElementById("chat-toast");
@@ -207,12 +277,13 @@
     document.getElementById("login-screen").classList.remove("hidden");
   }
 
-  function enterChat() {
+  async function enterChat() {
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("chat-screen").classList.remove("hidden");
     document.getElementById("me-name").textContent = myAuthor;
     globalAfterId = 0;
     document.getElementById("global-messages").innerHTML = "";
+    await refreshBlockedList();
     pollGlobal();
     globalPollTimer = setInterval(pollGlobal, 3000);
     pollDMPartners();
@@ -227,45 +298,113 @@
     document.getElementById("dm-view").classList.toggle("hidden", tab !== "dm");
   }
 
-  // ── 全体チャット ──
-  function renderMessage(container, msg, selfAuthor) {
-    const div = document.createElement("div");
-    div.className = "msg" + (msg.author === selfAuthor || msg.from === selfAuthor ? " self" : "");
-    const who = msg.author || msg.from;
-    const canReport = who !== selfAuthor;
-    div.innerHTML = `
-      <div class="author">${escapeHtml(who)} ・ ${formatTime(msg.created_at)}</div>
-      <div class="bubble">${escapeHtml(msg.text)}</div>
-      ${canReport ? `<div class="report-link" data-author="${escapeHtml(who)}">通報する</div>` : ""}
-    `;
-    container.appendChild(div);
-    if (canReport) {
-      div.querySelector(".report-link").addEventListener("click", () => reportUser(who));
+  // ── ブロック ──
+  async function refreshBlockedList() {
+    const data = await apiFetch("/api/chat/blocked");
+    if (data && data.ok) blockedSet = new Set(data.blocked);
+  }
+
+  async function blockUser(target) {
+    if (!confirm(target + " をブロックしますか？ 全体チャットでこの職人のメッセージが表示されなくなります。")) return;
+    const data = await apiFetch("/api/chat/block", { method: "POST", body: JSON.stringify({ target_author: target }) });
+    if (data && data.ok) {
+      blockedSet.add(target);
+      // 既に表示中のメッセージも除去
+      document.querySelectorAll(`.msg[data-author="${cssEscape(target)}"]`).forEach(el => el.remove());
+      showToast(target + " をブロックしました");
     }
   }
 
+  async function unblockUser(target) {
+    const data = await apiFetch("/api/chat/unblock", { method: "POST", body: JSON.stringify({ target_author: target }) });
+    if (data && data.ok) {
+      blockedSet.delete(target);
+      showToast(target + " のブロックを解除しました");
+    }
+  }
+
+  function cssEscape(str) {
+    return String(str).replace(/["\\]/g, "\\$&");
+  }
+
+  // ── メッセージ描画 ──
+  function renderMessage(container, msg, selfAuthor, kind) {
+    const who = msg.author || msg.from;
+    if (kind === "global" && blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は表示しない
+
+    const isSelf = who === selfAuthor;
+    const div = document.createElement("div");
+    div.className = "msg" + (isSelf ? " self" : "");
+    div.dataset.id = msg.id;
+    div.dataset.author = who;
+
+    const actions = [];
+    if (isSelf) {
+      actions.push(`<span class="action-link" data-act="delete">削除</span>`);
+    } else {
+      actions.push(`<span class="action-link" data-act="report">通報</span>`);
+      if (kind === "global") {
+        actions.push(`<span class="action-link" data-act="block">ブロック</span>`);
+      }
+    }
+
+    div.innerHTML = `
+      <div class="meta"><span>${escapeHtml(who)}</span><span>${formatTime(msg.created_at)}</span></div>
+      <div class="bubble">${escapeHtml(msg.text)}</div>
+      <div class="actions-row">${actions.join("")}</div>
+    `;
+    container.appendChild(div);
+
+    const reportLink = div.querySelector('[data-act="report"]');
+    if (reportLink) reportLink.addEventListener("click", () => reportUser(who));
+    const blockLink = div.querySelector('[data-act="block"]');
+    if (blockLink) blockLink.addEventListener("click", () => blockUser(who));
+    const deleteLink = div.querySelector('[data-act="delete"]');
+    if (deleteLink) deleteLink.addEventListener("click", () => deleteMessage(msg.id, kind, div));
+  }
+
+  async function deleteMessage(id, kind, el) {
+    if (!confirm("このメッセージを削除しますか？")) return;
+    const path = kind === "global" ? "/api/chat/delete" : "/api/chat/dm/delete";
+    const data = await apiFetch(path, { method: "POST", body: JSON.stringify({ id }) });
+    if (data && data.ok) {
+      el.remove();
+      showToast("削除しました");
+    }
+  }
+
+  // ── 全体チャット ──
   async function pollGlobal() {
     const data = await apiFetch("/api/chat/messages?after=" + globalAfterId);
     if (!data || !data.messages.length) return;
     const container = document.getElementById("global-messages");
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
     for (const msg of data.messages) {
-      renderMessage(container, msg, myAuthor);
+      renderMessage(container, msg, myAuthor, "global");
       globalAfterId = Math.max(globalAfterId, msg.id);
     }
-    if (atBottom || globalAfterId === data.messages[data.messages.length - 1].id) {
-      container.scrollTop = container.scrollHeight;
-    }
+    if (atBottom) container.scrollTop = container.scrollHeight;
   }
 
   async function sendGlobal() {
+    if (sendingGlobal) return; // 二重送信防止
     const input = document.getElementById("global-input");
     const text = input.value.trim();
     if (!text) return;
-    const data = await apiFetch("/api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
-    if (data && data.ok) {
-      input.value = "";
-      pollGlobal();
+    sendingGlobal = true;
+    input.disabled = true;
+    document.getElementById("global-send-btn").disabled = true;
+    try {
+      const data = await apiFetch("/api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
+      if (data && data.ok) {
+        input.value = "";
+        await pollGlobal();
+      }
+    } finally {
+      sendingGlobal = false;
+      input.disabled = false;
+      document.getElementById("global-send-btn").disabled = false;
+      input.focus();
     }
   }
 
@@ -295,14 +434,19 @@
     if (!author) return;
     currentDMPartner = author;
     dmAfterId = 0;
-    document.getElementById("dm-thread-header").textContent = author + " とのDM";
+    document.getElementById("dm-thread-title").textContent = author + " とのDM";
     document.getElementById("dm-messages").innerHTML = "";
     document.getElementById("dm-input").disabled = false;
     document.getElementById("dm-send-btn").disabled = false;
+    document.getElementById("dm-view").classList.add("show-thread"); // モバイル用
     clearInterval(dmPollTimer);
     await pollDM();
     dmPollTimer = setInterval(pollDM, 3000);
     pollDMPartners();
+  }
+
+  function closeDMThread() {
+    document.getElementById("dm-view").classList.remove("show-thread");
   }
 
   async function pollDM() {
@@ -312,21 +456,32 @@
     const container = document.getElementById("dm-messages");
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
     for (const msg of data.messages) {
-      renderMessage(container, msg, myAuthor);
+      renderMessage(container, msg, myAuthor, "dm");
       dmAfterId = Math.max(dmAfterId, msg.id);
     }
     if (atBottom) container.scrollTop = container.scrollHeight;
   }
 
   async function sendDM() {
+    if (sendingDM) return; // 二重送信防止
     if (!currentDMPartner) return;
     const input = document.getElementById("dm-input");
     const text = input.value.trim();
     if (!text) return;
-    const data = await apiFetch("/api/chat/dm/send", { method: "POST", body: JSON.stringify({ to: currentDMPartner, text }) });
-    if (data && data.ok) {
-      input.value = "";
-      pollDM();
+    sendingDM = true;
+    input.disabled = true;
+    document.getElementById("dm-send-btn").disabled = true;
+    try {
+      const data = await apiFetch("/api/chat/dm/send", { method: "POST", body: JSON.stringify({ to: currentDMPartner, text }) });
+      if (data && data.ok) {
+        input.value = "";
+        await pollDM();
+      }
+    } finally {
+      sendingDM = false;
+      input.disabled = false;
+      document.getElementById("dm-send-btn").disabled = false;
+      input.focus();
     }
   }
 
@@ -338,12 +493,12 @@
     if (data && data.ok) showToast("通報しました");
   }
 
-  // Enterで送信（Shift+Enterで改行）
+  // Enterで送信（Shift+Enterで改行）。IME変換確定のEnterでは送信しない。
   document.getElementById("global-input").addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendGlobal(); }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendGlobal(); }
   });
   document.getElementById("dm-input").addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDM(); }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDM(); }
   });
 
   // 初期化: トークンがあれば自動ログイン
