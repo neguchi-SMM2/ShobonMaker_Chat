@@ -278,7 +278,11 @@
       return null;
     }
     if (res.status === 403) {
-      showToast("あなたはチャットを利用できません（BAN中の可能性があります）");
+      if (data && data.error === "blocked_recipient") {
+        showToast("ブロック中の相手にはメッセージを送信できません");
+      } else {
+        showToast("あなたはチャットを利用できません（BAN中の可能性があります）");
+      }
       return null;
     }
     if (!res.ok) {
@@ -330,6 +334,25 @@
     localStorage.removeItem("chat_token");
     localStorage.removeItem("chat_author");
     clearInterval(globalPollTimer); clearInterval(dmPollTimer); clearInterval(dmPartnersPollTimer);
+
+    // 別の職人が同じブラウザで再ログインしても前の職人のデータが残らないよう、状態を完全にリセットする
+    globalAfterId = 0;
+    dmAfterId = 0;
+    currentDMPartner = null;
+    blockedSet = new Set();
+    pollingGlobal = false;
+    pollingDM = false;
+    document.getElementById("global-messages").innerHTML = "";
+    document.getElementById("dm-messages").innerHTML = "";
+    document.getElementById("dm-partners").innerHTML = "";
+    document.getElementById("dm-thread-title").textContent = "相手を選択してください";
+    document.getElementById("dm-input").disabled = true;
+    document.getElementById("dm-input").value = "";
+    document.getElementById("dm-send-btn").disabled = true;
+    document.getElementById("dm-block-toggle-btn").classList.add("hidden");
+    document.getElementById("dm-view").classList.remove("show-thread");
+    switchTab("global");
+
     document.getElementById("chat-screen").classList.add("hidden");
     document.getElementById("login-screen").classList.remove("hidden");
   }
@@ -425,6 +448,7 @@
   function renderMessage(container, msg, selfAuthor, kind) {
     const who = msg.author || msg.from;
     if (blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は全体チャット・DMどちらも表示しない
+    if (container.querySelector(`.msg[data-id="${msg.id}"]`)) return; // 同じIDのメッセージを二重描画しない（ポーリング競合対策）
 
     // サーバー側がトークンから確実に判定したself値を優先する（クライアント側変数のズレによる誤表示を防ぐ）
     const isSelf = typeof msg.self === "boolean" ? msg.self : (who === selfAuthor);
@@ -467,17 +491,24 @@
   }
 
   // ── 全体チャット ──
+  let pollingGlobal = false;
   async function pollGlobal() {
-    const data = await apiFetch("/api/chat/messages?after=" + globalAfterId);
-    if (!data) return;
-    const container = document.getElementById("global-messages");
-    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
-    for (const msg of data.messages) {
-      renderMessage(container, msg, myAuthor, "global");
-      globalAfterId = Math.max(globalAfterId, msg.id);
+    if (pollingGlobal) return; // 前回のポーリングが終わっていなければスキップ（競合による二重描画対策）
+    pollingGlobal = true;
+    try {
+      const data = await apiFetch("/api/chat/messages?after=" + globalAfterId);
+      if (!data) return;
+      const container = document.getElementById("global-messages");
+      const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+      for (const msg of data.messages) {
+        renderMessage(container, msg, myAuthor, "global");
+        globalAfterId = Math.max(globalAfterId, msg.id);
+      }
+      removeDeletedMessages(container, data.deletedIds);
+      if (atBottom) container.scrollTop = container.scrollHeight;
+    } finally {
+      pollingGlobal = false;
     }
-    removeDeletedMessages(container, data.deletedIds);
-    if (atBottom) container.scrollTop = container.scrollHeight;
   }
 
   // サーバーから通知された削除済みIDに該当する要素をDOMから除去する
@@ -491,6 +522,8 @@
 
   // 全体チャットを最初から取得し直す（ブロック解除後に隠れていたメッセージを再表示するため）
   async function refreshGlobalMessages() {
+    // 進行中のポーリングが終わるのを待ってから、afterIdをリセットしてクリアする（競合防止）
+    while (pollingGlobal) await new Promise(r => setTimeout(r, 50));
     globalAfterId = 0;
     document.getElementById("global-messages").innerHTML = "";
     await pollGlobal();
@@ -546,8 +579,6 @@
     dmAfterId = 0;
     document.getElementById("dm-thread-title").textContent = author + " とのDM";
     document.getElementById("dm-messages").innerHTML = "";
-    document.getElementById("dm-input").disabled = false;
-    document.getElementById("dm-send-btn").disabled = false;
     document.getElementById("dm-view").classList.add("show-thread"); // モバイル用
     updateDMBlockButton();
     clearInterval(dmPollTimer);
@@ -558,11 +589,17 @@
 
   function updateDMBlockButton() {
     const btn = document.getElementById("dm-block-toggle-btn");
+    const input = document.getElementById("dm-input");
+    const sendBtn = document.getElementById("dm-send-btn");
     if (!currentDMPartner) { btn.classList.add("hidden"); return; }
     btn.classList.remove("hidden");
     const isBlocked = blockedSet.has(currentDMPartner);
     btn.textContent = isBlocked ? "ブロック中（解除）" : "ブロックする";
     btn.classList.toggle("is-blocked", isBlocked);
+    // ブロック中の相手には送信できないようにする
+    input.disabled = isBlocked;
+    sendBtn.disabled = isBlocked;
+    input.placeholder = isBlocked ? "ブロック中のためメッセージを送信できません" : "メッセージを入力 (最大300文字)";
   }
 
   async function toggleDMBlock() {
@@ -578,23 +615,31 @@
     document.getElementById("dm-view").classList.remove("show-thread");
   }
 
+  let pollingDM = false;
   async function pollDM() {
     if (!currentDMPartner) return;
-    const data = await apiFetch("/api/chat/dm/messages?with=" + encodeURIComponent(currentDMPartner) + "&after=" + dmAfterId);
-    if (!data) return;
-    const container = document.getElementById("dm-messages");
-    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
-    for (const msg of data.messages) {
-      renderMessage(container, msg, myAuthor, "dm");
-      dmAfterId = Math.max(dmAfterId, msg.id);
+    if (pollingDM) return; // 前回のポーリングが終わっていなければスキップ（競合による二重描画対策）
+    pollingDM = true;
+    try {
+      const data = await apiFetch("/api/chat/dm/messages?with=" + encodeURIComponent(currentDMPartner) + "&after=" + dmAfterId);
+      if (!data) return;
+      const container = document.getElementById("dm-messages");
+      const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+      for (const msg of data.messages) {
+        renderMessage(container, msg, myAuthor, "dm");
+        dmAfterId = Math.max(dmAfterId, msg.id);
+      }
+      removeDeletedMessages(container, data.deletedIds);
+      if (atBottom) container.scrollTop = container.scrollHeight;
+    } finally {
+      pollingDM = false;
     }
-    removeDeletedMessages(container, data.deletedIds);
-    if (atBottom) container.scrollTop = container.scrollHeight;
   }
 
   // 現在開いているDMスレッドを最初から取得し直す（ブロック解除後の再表示用）
   async function refreshDMMessages() {
     if (!currentDMPartner) return;
+    while (pollingDM) await new Promise(r => setTimeout(r, 50));
     dmAfterId = 0;
     document.getElementById("dm-messages").innerHTML = "";
     await pollDM();
