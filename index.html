@@ -65,6 +65,10 @@
   nav button { flex: 1; padding: 0.6rem; background: none; border: none; color: var(--text-sub); cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); }
 
+  /* 未読数バッジ（LINE風） */
+  .badge { display: inline-block; min-width: 1.1rem; height: 1.1rem; line-height: 1.1rem; padding: 0 0.3rem; margin-left: 0.35rem; border-radius: 999px; background: #ef4444; color: #fff; font-size: 0.68rem; font-weight: 700; text-align: center; vertical-align: middle; }
+  .partner .badge { float: right; margin-left: 0; }
+
   main { flex: 1; overflow: hidden; display: flex; }
 
   /* 全体チャット */
@@ -168,7 +172,7 @@
     </header>
     <nav>
       <button id="tab-global" class="active" onclick="switchTab('global')">全体チャット</button>
-      <button id="tab-dm" onclick="switchTab('dm')">DM</button>
+      <button id="tab-dm" onclick="switchTab('dm')">DM<span id="dm-tab-badge" class="badge hidden"></span></button>
     </nav>
     <main>
       <!-- 全体チャット -->
@@ -286,7 +290,11 @@
       return null;
     }
     if (!res.ok) {
-      showToast((data && data.error) || "エラーが発生しました");
+      if (data && data.error === "inappropriate_content") {
+        showToast("不適切な内容が含まれているため送信できません");
+      } else {
+        showToast((data && data.error) || "エラーが発生しました");
+      }
       return null;
     }
     return data;
@@ -350,6 +358,7 @@
     document.getElementById("dm-input").value = "";
     document.getElementById("dm-send-btn").disabled = true;
     document.getElementById("dm-block-toggle-btn").classList.add("hidden");
+    document.getElementById("dm-tab-badge").classList.add("hidden");
     document.getElementById("dm-view").classList.remove("show-thread");
     switchTab("global");
 
@@ -562,6 +571,7 @@
     if (!data) return;
     const list = document.getElementById("dm-partners");
     list.innerHTML = "";
+    updateDMTabBadge(data.partners);
     if (!data.partners.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
@@ -572,9 +582,30 @@
     for (const p of data.partners) {
       const div = document.createElement("div");
       div.className = "partner" + (p.author === currentDMPartner ? " active" : "");
-      div.textContent = p.author;
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = p.author;
+      div.appendChild(nameSpan);
+      // 開いている相手は既読済みなのでバッジは出さない（LINEのように未読の相手だけ表示）
+      if (p.unread_count > 0 && p.author !== currentDMPartner) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = p.unread_count > 99 ? "99+" : String(p.unread_count);
+        div.appendChild(badge);
+      }
       div.addEventListener("click", () => openDM(p.author));
       list.appendChild(div);
+    }
+  }
+
+  // DMタブ自体に未読合計をLINEのようなバッジで表示する
+  function updateDMTabBadge(partners) {
+    const total = partners.reduce((sum, p) => sum + (p.author === currentDMPartner ? 0 : (p.unread_count || 0)), 0);
+    const badge = document.getElementById("dm-tab-badge");
+    if (total > 0) {
+      badge.textContent = total > 99 ? "99+" : String(total);
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
     }
   }
 
