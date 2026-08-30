@@ -46,6 +46,12 @@
   #login-screen label:first-of-type { margin-top: 0; }
   #login-screen input { width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.95rem; }
   #login-screen button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  #login-screen button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #terms-box { max-height: 140px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; font-size: 0.78rem; color: var(--text-sub); background: var(--bg-input); }
+  #terms-box p { margin-bottom: 0.5rem; }
+  #terms-box ul { padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .terms-check { display: flex !important; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text) !important; margin-top: 0.75rem !important; cursor: pointer; }
+  .terms-check input { width: auto !important; }
   #login-error { margin-top: 0.75rem; font-size: 0.85rem; color: var(--danger); }
 
   /* チャット画面 */
@@ -128,7 +134,25 @@
     <input id="login-author" type="text" placeholder="職人名">
     <label>パスワード</label>
     <input id="login-password" type="password" placeholder="パスワード">
-    <button onclick="doLogin()">ログイン</button>
+
+    <label>利用規約</label>
+    <div id="terms-box">
+      <p>職人チャットをご利用いただく前に、以下の点にご同意ください。</p>
+      <ul>
+        <li>他の職人への誹謗中傷、なりすまし、個人情報の公開を禁止します。</li>
+        <li>宣伝・勧誘目的での過度な連投、荒らし行為を禁止します。</li>
+        <li>不適切な発言は運営により削除・チャットBANの対象となる場合があります。</li>
+        <li>迷惑な相手は各自「ブロック」機能でご対応いただけます。悪質な場合は「通報」機能をご利用ください。</li>
+        <li>送信したメッセージはサーバーに保存されます。</li>
+        <li>本規約は予告なく変更される場合があります。</li>
+      </ul>
+    </div>
+    <label class="terms-check">
+      <input type="checkbox" id="terms-agree" onchange="onTermsAgreeChange()">
+      利用規約に同意する
+    </label>
+
+    <button id="login-btn" onclick="doLogin()" disabled>ログイン</button>
     <div id="login-error"></div>
   </div>
 
@@ -265,7 +289,15 @@
   }
 
   // ── ログイン ──
+  function onTermsAgreeChange() {
+    document.getElementById("login-btn").disabled = !document.getElementById("terms-agree").checked;
+  }
+
   async function doLogin() {
+    if (!document.getElementById("terms-agree").checked) {
+      document.getElementById("login-error").textContent = "利用規約への同意が必要です";
+      return;
+    }
     const author = document.getElementById("login-author").value.trim();
     const password = document.getElementById("login-password").value;
     if (!author || !password) {
@@ -374,9 +406,11 @@
     const data = await apiFetch("/api/chat/unblock", { method: "POST", body: JSON.stringify({ target_author: target }) });
     if (data && data.ok) {
       blockedSet.delete(target);
+      // 全体チャットで隠れていたそのユーザーのメッセージを再表示するため、最初から取得し直す
+      await refreshGlobalMessages();
       if (currentDMPartner === target) {
         updateDMBlockButton();
-        await pollDM(); // ブロック解除後、過去に受信済みだった未表示分を再取得したいので念のため再ポーリング
+        await refreshDMMessages();
       }
       renderBlockPanelList();
       showToast(target + " のブロックを解除しました");
@@ -392,7 +426,8 @@
     const who = msg.author || msg.from;
     if (blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は全体チャット・DMどちらも表示しない
 
-    const isSelf = who === selfAuthor;
+    // サーバー側がトークンから確実に判定したself値を優先する（クライアント側変数のズレによる誤表示を防ぐ）
+    const isSelf = typeof msg.self === "boolean" ? msg.self : (who === selfAuthor);
     const div = document.createElement("div");
     div.className = "msg" + (isSelf ? " self" : "");
     div.dataset.id = msg.id;
@@ -434,14 +469,31 @@
   // ── 全体チャット ──
   async function pollGlobal() {
     const data = await apiFetch("/api/chat/messages?after=" + globalAfterId);
-    if (!data || !data.messages.length) return;
+    if (!data) return;
     const container = document.getElementById("global-messages");
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
     for (const msg of data.messages) {
       renderMessage(container, msg, myAuthor, "global");
       globalAfterId = Math.max(globalAfterId, msg.id);
     }
+    removeDeletedMessages(container, data.deletedIds);
     if (atBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  // サーバーから通知された削除済みIDに該当する要素をDOMから除去する
+  function removeDeletedMessages(container, deletedIds) {
+    if (!deletedIds || !deletedIds.length) return;
+    for (const id of deletedIds) {
+      const el = container.querySelector(`.msg[data-id="${id}"]`);
+      if (el) el.remove();
+    }
+  }
+
+  // 全体チャットを最初から取得し直す（ブロック解除後に隠れていたメッセージを再表示するため）
+  async function refreshGlobalMessages() {
+    globalAfterId = 0;
+    document.getElementById("global-messages").innerHTML = "";
+    await pollGlobal();
   }
 
   async function sendGlobal() {
@@ -529,14 +581,23 @@
   async function pollDM() {
     if (!currentDMPartner) return;
     const data = await apiFetch("/api/chat/dm/messages?with=" + encodeURIComponent(currentDMPartner) + "&after=" + dmAfterId);
-    if (!data || !data.messages.length) return;
+    if (!data) return;
     const container = document.getElementById("dm-messages");
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
     for (const msg of data.messages) {
       renderMessage(container, msg, myAuthor, "dm");
       dmAfterId = Math.max(dmAfterId, msg.id);
     }
+    removeDeletedMessages(container, data.deletedIds);
     if (atBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  // 現在開いているDMスレッドを最初から取得し直す（ブロック解除後の再表示用）
+  async function refreshDMMessages() {
+    if (!currentDMPartner) return;
+    dmAfterId = 0;
+    document.getElementById("dm-messages").innerHTML = "";
+    await pollDM();
   }
 
   async function sendDM() {
