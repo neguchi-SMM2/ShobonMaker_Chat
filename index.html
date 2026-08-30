@@ -473,7 +473,7 @@
     container.appendChild(div);
 
     const reportLink = div.querySelector('[data-act="report"]');
-    if (reportLink) reportLink.addEventListener("click", () => reportUser(who));
+    if (reportLink) reportLink.addEventListener("click", () => reportUser(who, msg.id, kind));
     const blockLink = div.querySelector('[data-act="block"]');
     if (blockLink) blockLink.addEventListener("click", () => blockUser(who));
     const deleteLink = div.querySelector('[data-act="delete"]');
@@ -541,7 +541,12 @@
       const data = await apiFetch("/api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
       if (data && data.ok) {
         input.value = "";
-        await pollGlobal();
+        // ポーリングで再取得せず、レスポンスのIDを使ってその場で1回だけ描画する
+        // （定期ポーリングとの競合による二重表示を避けるため）
+        const container = document.getElementById("global-messages");
+        renderMessage(container, { id: data.id, author: myAuthor, text, created_at: data.created_at, self: true }, myAuthor, "global");
+        globalAfterId = Math.max(globalAfterId, data.id);
+        container.scrollTop = container.scrollHeight;
       }
     } finally {
       sendingGlobal = false;
@@ -658,7 +663,11 @@
       const data = await apiFetch("/api/chat/dm/send", { method: "POST", body: JSON.stringify({ to: currentDMPartner, text }) });
       if (data && data.ok) {
         input.value = "";
-        await pollDM();
+        // ポーリングで再取得せず、レスポンスのIDを使ってその場で1回だけ描画する
+        const container = document.getElementById("dm-messages");
+        renderMessage(container, { id: data.id, from: myAuthor, to: currentDMPartner, text, created_at: data.created_at, self: true }, myAuthor, "dm");
+        dmAfterId = Math.max(dmAfterId, data.id);
+        container.scrollTop = container.scrollHeight;
       }
     } finally {
       sendingDM = false;
@@ -669,10 +678,12 @@
   }
 
   // ── 通報 ──
-  async function reportUser(target) {
+  async function reportUser(target, messageId, kind) {
     const reason = prompt(target + " を通報する理由を入力してください:");
     if (!reason) return;
-    const data = await apiFetch("/api/chat/report", { method: "POST", body: JSON.stringify({ target_author: target, reason }) });
+    const body = { target_author: target, reason };
+    if (messageId) { body.message_id = messageId; body.kind = kind; }
+    const data = await apiFetch("/api/chat/report", { method: "POST", body: JSON.stringify(body) });
     if (data && data.ok) showToast("通報しました");
   }
 
