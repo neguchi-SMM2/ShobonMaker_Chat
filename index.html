@@ -2,6 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="google-site-verification" content="y9mPcM9Q0EfNqKf1SNT6B_ohnBrMD3ydIhJDiofaZnc">
+<meta name="description" content="しょぼんめーかーの職人向けチャットサービス。職人同士で交流したり、しょぼんめーかーに関する情報を共有できます。">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>職人チャット</title>
 <style>
@@ -274,7 +276,7 @@
   /** 現在が深夜停止時間帯(JST 1:00〜6:00)かどうかを判定する */
   function isChatNightModeNow() {
     const jstHour = parseInt(
-      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "2-digit", hourCycle: "H23" }).format(new Date()),
+      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "2-digit", hourCycle: "h23" }).format(new Date()),
       10
     );
     return jstHour >= CHAT_NIGHT_START_HOUR && jstHour < CHAT_NIGHT_END_HOUR;
