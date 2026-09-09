@@ -2,10 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="google-site-verification" content="y9mPcM9Q0EfNqKf1SNT6B_ohnBrMD3ydIhJDiofaZnc" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="しょぼんめーかーの職人のためのチャットサービス">
-<title>職人チャット - for しょぼんめーかー</title>
+<title>職人チャット</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -55,6 +53,17 @@
   .terms-check { display: flex !important; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text) !important; margin-top: 0.75rem !important; cursor: pointer; }
   .terms-check input { width: auto !important; }
   #login-error { margin-top: 0.75rem; font-size: 0.85rem; color: var(--danger); }
+
+  /* 夜間停止画面 */
+  #night-mode-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+  #night-mode-box { max-width: 380px; text-align: center; }
+  #night-mode-icon { font-size: 3rem; margin-bottom: 1rem; }
+  #night-mode-box h1 { font-size: 1.2rem; margin-bottom: 0.75rem; }
+  #night-mode-box p { font-size: 0.9rem; color: var(--text-sub); line-height: 1.6; margin-bottom: 0.5rem; }
+  #night-mode-until { font-weight: 600; color: var(--text) !important; }
+
+  /* クールタイム表示 */
+  .cooldown-text { font-size: 0.75rem; color: var(--text-faint); padding: 0 0.75rem 0.5rem; text-align: right; }
 
   /* チャット画面 */
   #chat-screen { display: flex; flex-direction: column; height: 100vh; }
@@ -133,6 +142,16 @@
 </head>
 <body>
 
+  <!-- 夜間停止画面 -->
+  <div id="night-mode-screen" class="hidden">
+    <div id="night-mode-box">
+      <div id="night-mode-icon">🌙</div>
+      <h1>ただいま夜間休止中です</h1>
+      <p>職人チャットは深夜1時〜6時の間、サーバーメンテナンスのためご利用いただけません。</p>
+      <p id="night-mode-until"></p>
+    </div>
+  </div>
+
   <!-- ログイン画面 -->
   <div id="login-screen">
     <h1>職人チャット ログイン</h1>
@@ -180,8 +199,9 @@
       <!-- 全体チャット -->
       <div id="global-view">
         <div id="global-messages" class="messages"></div>
+        <div id="global-cooldown" class="cooldown-text hidden"></div>
         <div class="composer">
-          <textarea id="global-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300"></textarea>
+          <textarea id="global-input" placeholder="メッセージを入力 (最大100文字)" maxlength="100"></textarea>
           <button id="global-send-btn" onclick="sendGlobal()">送信</button>
         </div>
       </div>
@@ -202,8 +222,9 @@
             <button id="dm-block-toggle-btn" class="hidden" onclick="toggleDMBlock()"></button>
           </div>
           <div id="dm-messages" class="messages"></div>
+          <div id="dm-cooldown" class="cooldown-text hidden"></div>
           <div class="composer">
-            <textarea id="dm-input" placeholder="メッセージを入力 (最大300文字)" maxlength="300" disabled></textarea>
+            <textarea id="dm-input" placeholder="メッセージを入力 (最大100文字)" maxlength="100" disabled></textarea>
             <button id="dm-send-btn" onclick="sendDM()" disabled>送信</button>
           </div>
         </div>
@@ -241,6 +262,23 @@
   // 二重送信防止フラグ
   let sendingGlobal = false;
   let sendingDM = false;
+
+  // 送信クールタイム（全チャット空間共通、1分）
+  let nextAllowedSendAt = 0;
+  let cooldownTimer = null;
+
+  let nightModeTimer = null;
+  const CHAT_NIGHT_START_HOUR = 1; // JST
+  const CHAT_NIGHT_END_HOUR   = 6; // JST
+
+  /** 現在が深夜停止時間帯(JST 1:00〜6:00)かどうかを判定する */
+  function isChatNightModeNow() {
+    const jstHour = parseInt(
+      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "2-digit", hourCycle: "H23" }).format(new Date()),
+      10
+    );
+    return jstHour >= CHAT_NIGHT_START_HOUR && jstHour < CHAT_NIGHT_END_HOUR;
+  }
 
   // ── テーマ ──
   function applyTheme(theme) {
@@ -286,6 +324,9 @@
     if (res.status === 403) {
       if (data && data.error === "blocked_recipient") {
         showToast("ブロック中の相手にはメッセージを送信できません");
+      } else if (data && data.error === "night_mode") {
+        showToast("深夜1時〜6時はチャットをご利用いただけません");
+        enterNightMode();
       } else {
         showToast("あなたはチャットを利用できません（BAN中の可能性があります）");
       }
@@ -294,6 +335,8 @@
     if (!res.ok) {
       if (data && data.error === "inappropriate_content") {
         showToast("不適切な内容が含まれているため送信できません");
+      } else if (data && data.error === "daily_limit_exceeded") {
+        showToast("本日の送信可能な文字数の上限に達しました。明日また送信できます");
       } else {
         showToast((data && data.error) || "エラーが発生しました");
       }
@@ -302,12 +345,96 @@
     return data;
   }
 
+  // ── 夜間停止モード ──
+  function enterNightMode() {
+    clearInterval(globalPollTimer); clearInterval(dmPollTimer); clearInterval(dmPartnersPollTimer);
+    document.getElementById("login-screen").classList.add("hidden");
+    document.getElementById("chat-screen").classList.add("hidden");
+    document.getElementById("night-mode-screen").classList.remove("hidden");
+    document.getElementById("night-mode-until").textContent =
+      `午前${CHAT_NIGHT_END_HOUR}時になると自動的にご利用いただけるようになります。`;
+  }
+
+  function exitNightMode() {
+    document.getElementById("night-mode-screen").classList.add("hidden");
+    if (token && myAuthor) {
+      enterChat();
+    } else {
+      document.getElementById("login-screen").classList.remove("hidden");
+    }
+  }
+
+  // 1分ごとに夜間モードへの突入・解除をチェックし、リロードなしで自動的に切り替える
+  function watchNightMode() {
+    let wasNightMode = isChatNightModeNow();
+    if (wasNightMode) enterNightMode();
+    clearInterval(nightModeTimer);
+    nightModeTimer = setInterval(() => {
+      const isNight = isChatNightModeNow();
+      if (isNight && !wasNightMode) {
+        enterNightMode();
+      } else if (!isNight && wasNightMode) {
+        exitNightMode();
+      }
+      wasNightMode = isNight;
+    }, 60 * 1000);
+  }
+
+  // ── クールタイム（全チャット空間共通・送信ごとに1分） ──
+  function startSendCooldown() {
+    nextAllowedSendAt = Date.now() + 60 * 1000;
+    updateCooldownUI();
+    clearInterval(cooldownTimer);
+    cooldownTimer = setInterval(updateCooldownUI, 1000);
+  }
+
+  function updateCooldownUI() {
+    const remainingMs = nextAllowedSendAt - Date.now();
+    const globalInput = document.getElementById("global-input");
+    const globalBtn = document.getElementById("global-send-btn");
+    const globalCooldown = document.getElementById("global-cooldown");
+    const dmInput = document.getElementById("dm-input");
+    const dmBtn = document.getElementById("dm-send-btn");
+    const dmCooldown = document.getElementById("dm-cooldown");
+    const dmBlocked = currentDMPartner && blockedSet.has(currentDMPartner);
+
+    if (remainingMs > 0) {
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      globalInput.disabled = true;
+      globalBtn.disabled = true;
+      globalCooldown.textContent = `次のメッセージまであと${remainingSec}秒`;
+      globalCooldown.classList.remove("hidden");
+      if (!dmBlocked) {
+        dmInput.disabled = true;
+        dmBtn.disabled = true;
+      }
+      if (currentDMPartner) {
+        dmCooldown.textContent = `次のメッセージまであと${remainingSec}秒`;
+        dmCooldown.classList.remove("hidden");
+      }
+    } else {
+      clearInterval(cooldownTimer);
+      globalInput.disabled = false;
+      globalBtn.disabled = false;
+      globalCooldown.classList.add("hidden");
+      if (!dmBlocked && currentDMPartner) {
+        dmInput.disabled = false;
+        dmBtn.disabled = false;
+      }
+      dmCooldown.classList.add("hidden");
+    }
+  }
+
   // ── ログイン ──
   function onTermsAgreeChange() {
     document.getElementById("login-btn").disabled = !document.getElementById("terms-agree").checked;
   }
 
   async function doLogin() {
+    if (isChatNightModeNow()) {
+      document.getElementById("login-error").textContent = "深夜1時〜6時はご利用いただけません";
+      return;
+    }
     if (!document.getElementById("terms-agree").checked) {
       document.getElementById("login-error").textContent = "利用規約への同意が必要です";
       return;
@@ -352,6 +479,12 @@
     blockedSet = new Set();
     pollingGlobal = false;
     pollingDM = false;
+    clearInterval(cooldownTimer);
+    nextAllowedSendAt = 0;
+    document.getElementById("global-cooldown").classList.add("hidden");
+    document.getElementById("dm-cooldown").classList.add("hidden");
+    document.getElementById("global-input").disabled = false;
+    document.getElementById("global-send-btn").disabled = false;
     document.getElementById("global-messages").innerHTML = "";
     document.getElementById("dm-messages").innerHTML = "";
     document.getElementById("dm-partners").innerHTML = "";
@@ -542,6 +675,8 @@
 
   async function sendGlobal() {
     if (sendingGlobal) return; // 二重送信防止
+    if (Date.now() < nextAllowedSendAt) return; // クールタイム中
+    if (isChatNightModeNow()) { showToast("深夜1時〜6時はチャットをご利用いただけません"); enterNightMode(); return; }
     const input = document.getElementById("global-input");
     const text = input.value.trim();
     if (!text) return;
@@ -558,12 +693,12 @@
         renderMessage(container, { id: data.id, author: myAuthor, text, created_at: data.created_at, self: true }, myAuthor, "global");
         globalAfterId = Math.max(globalAfterId, data.id);
         container.scrollTop = container.scrollHeight;
+        startSendCooldown(); // 全チャット空間共通で1分間のクールタイムを開始
       }
     } finally {
       sendingGlobal = false;
-      input.disabled = false;
-      document.getElementById("global-send-btn").disabled = false;
       input.focus();
+      updateCooldownUI(); // クールタイム中でなければここでdisabledが解除される
     }
   }
 
@@ -634,10 +769,11 @@
     const isBlocked = blockedSet.has(currentDMPartner);
     btn.textContent = isBlocked ? "ブロック中（解除）" : "ブロックする";
     btn.classList.toggle("is-blocked", isBlocked);
-    // ブロック中の相手には送信できないようにする
-    input.disabled = isBlocked;
-    sendBtn.disabled = isBlocked;
-    input.placeholder = isBlocked ? "ブロック中のためメッセージを送信できません" : "メッセージを入力 (最大300文字)";
+    // ブロック中の相手には送信できないようにする（クールタイム中はそちらを優先して無効のままにする）
+    const inCooldown = Date.now() < nextAllowedSendAt;
+    input.disabled = isBlocked || inCooldown;
+    sendBtn.disabled = isBlocked || inCooldown;
+    input.placeholder = isBlocked ? "ブロック中のためメッセージを送信できません" : "メッセージを入力 (最大100文字)";
   }
 
   async function toggleDMBlock() {
@@ -685,7 +821,9 @@
 
   async function sendDM() {
     if (sendingDM) return; // 二重送信防止
+    if (Date.now() < nextAllowedSendAt) return; // クールタイム中（全チャット空間共通）
     if (!currentDMPartner) return;
+    if (isChatNightModeNow()) { showToast("深夜1時〜6時はチャットをご利用いただけません"); enterNightMode(); return; }
     const input = document.getElementById("dm-input");
     const text = input.value.trim();
     if (!text) return;
@@ -701,12 +839,12 @@
         renderMessage(container, { id: data.id, from: myAuthor, to: currentDMPartner, text, created_at: data.created_at, self: true }, myAuthor, "dm");
         dmAfterId = Math.max(dmAfterId, data.id);
         container.scrollTop = container.scrollHeight;
+        startSendCooldown(); // 全チャット空間共通で1分間のクールタイムを開始
       }
     } finally {
       sendingDM = false;
-      input.disabled = false;
-      document.getElementById("dm-send-btn").disabled = false;
       input.focus();
+      updateCooldownUI(); // クールタイム中でなければここでdisabledが解除される
     }
   }
 
@@ -728,8 +866,9 @@
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDM(); }
   });
 
-  // 初期化: トークンがあれば自動ログイン
-  if (token && myAuthor) {
+  // 初期化: 夜間モードを判定・監視しつつ、トークンがあれば自動ログイン
+  watchNightMode();
+  if (!isChatNightModeNow() && token && myAuthor) {
     enterChat();
   }
 </script>
