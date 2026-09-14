@@ -2,10 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="google-site-verification" content="y9mPcM9Q0EfNqKf1SNT6B_ohnBrMD3ydIhJDiofaZnc">
-<meta name="description" content="しょぼんめーかーの職人向けチャットサービス。職人同士で交流したり、しょぼんめーかーに関する情報を共有できます。">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>職人チャット for しょぼんめーかー</title>
+<title>職人チャット</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -158,7 +156,7 @@
   <div id="login-screen">
     <h1>職人チャット ログイン</h1>
     <label>職人名 (author)</label>
-    <input id="login-author" type="text" placeholder="職人名(すべて小文字で入力)">
+    <input id="login-author" type="text" placeholder="職人名">
     <label>パスワード</label>
     <input id="login-password" type="password" placeholder="パスワード">
 
@@ -339,6 +337,10 @@
         showToast("不適切な内容が含まれているため送信できません");
       } else if (data && data.error === "daily_limit_exceeded") {
         showToast("本日の送信可能な文字数の上限に達しました。明日また送信できます");
+      } else if (data && data.error === "already_reported") {
+        showToast("このメッセージは既に通報済みです");
+      } else if (data && data.error === "report_cooldown") {
+        showToast("通報は10分に1回までです。しばらくしてからお試しください");
       } else {
         showToast((data && data.error) || "エラーが発生しました");
       }
