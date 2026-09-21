@@ -65,6 +65,11 @@
   /* クールタイム表示 */
   .cooldown-text { font-size: 0.75rem; color: var(--text-faint); padding: 0 0.75rem 0.5rem; text-align: right; }
 
+  /* 過去のメッセージ読み込み */
+  .load-older { text-align: center; font-size: 0.8rem; color: var(--accent); cursor: pointer; padding: 0.5rem; flex-shrink: 0; }
+  .load-older:hover { text-decoration: underline; }
+  .load-older.no-more { color: var(--text-faint); cursor: default; text-decoration: none; }
+
   /* チャット画面 */
   #chat-screen { display: flex; flex-direction: column; height: 100vh; }
   header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -253,6 +258,12 @@
 
   let globalAfterId = 0;
   let dmAfterId = 0;
+  let globalOldestId = null; // 現在読み込まれている中で一番古いメッセージのID（過去読み込みの起点）
+  let dmOldestId = null;
+  let globalHasMoreOlder = true;
+  let dmHasMoreOlder = true;
+  let loadingOlderGlobal = false;
+  let loadingOlderDM = false;
   let currentDMPartner = null;
   let globalPollTimer = null;
   let dmPollTimer = null;
@@ -479,6 +490,12 @@
     // 別の職人が同じブラウザで再ログインしても前の職人のデータが残らないよう、状態を完全にリセットする
     globalAfterId = 0;
     dmAfterId = 0;
+    globalOldestId = null;
+    dmOldestId = null;
+    globalHasMoreOlder = true;
+    dmHasMoreOlder = true;
+    loadingOlderGlobal = false;
+    loadingOlderDM = false;
     currentDMPartner = null;
     blockedSet = new Set();
     pollingGlobal = false;
@@ -593,7 +610,7 @@
   }
 
   // ── メッセージ描画 ──
-  function renderMessage(container, msg, selfAuthor, kind) {
+  function renderMessage(container, msg, selfAuthor, kind, insertBefore = null) {
     const who = msg.author || msg.from;
     if (blockedSet.has(who) && who !== selfAuthor) return; // ブロック中は全体チャット・DMどちらも表示しない
     if (container.querySelector(`.msg[data-id="${msg.id}"]`)) return; // 同じIDのメッセージを二重描画しない（ポーリング競合対策）
@@ -618,7 +635,8 @@
       <div class="bubble">${escapeHtml(msg.text)}</div>
       <div class="actions-row">${actions.join("")}</div>
     `;
-    container.appendChild(div);
+    if (insertBefore) container.insertBefore(div, insertBefore);
+    else container.appendChild(div);
 
     const reportLink = div.querySelector('[data-act="report"]');
     if (reportLink) reportLink.addEventListener("click", () => reportUser(who, msg.id, kind));
@@ -648,6 +666,12 @@
       if (!data) return;
       const container = document.getElementById("global-messages");
       const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+      // 初回読み込み分から、現在読み込まれている中で一番古いメッセージのIDを記録する
+      // （2回目以降のポーリングはこれより新しいものしか来ないため、初回のみ設定する）
+      if (globalOldestId === null && data.messages.length > 0) {
+        globalOldestId = data.messages[0].id;
+        ensureLoadOlderButton(container, "global");
+      }
       for (const msg of data.messages) {
         renderMessage(container, msg, myAuthor, "global");
         globalAfterId = Math.max(globalAfterId, msg.id);
@@ -656,6 +680,59 @@
       if (atBottom) container.scrollTop = container.scrollHeight;
     } finally {
       pollingGlobal = false;
+    }
+  }
+
+  // 「過去のメッセージを読み込む」ボタンを、メッセージ一覧の一番上に用意する
+  function ensureLoadOlderButton(container, kind) {
+    const id = kind === "global" ? "global-load-older" : "dm-load-older";
+    if (document.getElementById(id)) return;
+    const btn = document.createElement("div");
+    btn.id = id;
+    btn.className = "load-older";
+    btn.textContent = "過去のメッセージを読み込む";
+    btn.addEventListener("click", () => {
+      if (kind === "global") loadOlderGlobalMessages();
+      else loadOlderDMMessages();
+    });
+    container.insertBefore(btn, container.firstChild);
+  }
+
+  function setLoadOlderState(kind, hasMore) {
+    const id = kind === "global" ? "global-load-older" : "dm-load-older";
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (hasMore) {
+      btn.textContent = "過去のメッセージを読み込む";
+      btn.classList.remove("no-more");
+    } else {
+      btn.textContent = "これより過去のメッセージはありません";
+      btn.classList.add("no-more");
+    }
+  }
+
+  async function loadOlderGlobalMessages() {
+    if (loadingOlderGlobal || !globalHasMoreOlder || globalOldestId === null) return;
+    loadingOlderGlobal = true;
+    try {
+      const data = await apiFetch("/api/chat/messages?before=" + globalOldestId);
+      if (!data) return;
+      if (!data.messages.length) {
+        globalHasMoreOlder = false;
+        setLoadOlderState("global", false);
+        return;
+      }
+      const container = document.getElementById("global-messages");
+      const anchor = document.getElementById("global-load-older").nextSibling; // 現在一番古いメッセージ（あれば）
+      const prevScrollHeight = container.scrollHeight;
+      for (const msg of data.messages) {
+        renderMessage(container, msg, myAuthor, "global", anchor);
+      }
+      globalOldestId = data.messages[0].id;
+      // 読み込み前の見た目の位置を保つため、増えた分だけスクロール位置を調整する
+      container.scrollTop += container.scrollHeight - prevScrollHeight;
+    } finally {
+      loadingOlderGlobal = false;
     }
   }
 
@@ -673,6 +750,8 @@
     // 進行中のポーリングが終わるのを待ってから、afterIdをリセットしてクリアする（競合防止）
     while (pollingGlobal) await new Promise(r => setTimeout(r, 50));
     globalAfterId = 0;
+    globalOldestId = null;
+    globalHasMoreOlder = true;
     document.getElementById("global-messages").innerHTML = "";
     await pollGlobal();
   }
@@ -754,6 +833,8 @@
     if (!author) return;
     currentDMPartner = author;
     dmAfterId = 0;
+    dmOldestId = null;
+    dmHasMoreOlder = true;
     document.getElementById("dm-thread-title").textContent = author + " とのDM";
     document.getElementById("dm-messages").innerHTML = "";
     document.getElementById("dm-view").classList.add("show-thread"); // モバイル用
@@ -803,6 +884,10 @@
       if (!data) return;
       const container = document.getElementById("dm-messages");
       const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+      if (dmOldestId === null && data.messages.length > 0) {
+        dmOldestId = data.messages[0].id;
+        ensureLoadOlderButton(container, "dm");
+      }
       for (const msg of data.messages) {
         renderMessage(container, msg, myAuthor, "dm");
         dmAfterId = Math.max(dmAfterId, msg.id);
@@ -814,11 +899,37 @@
     }
   }
 
+  async function loadOlderDMMessages() {
+    if (loadingOlderDM || !dmHasMoreOlder || dmOldestId === null || !currentDMPartner) return;
+    loadingOlderDM = true;
+    try {
+      const data = await apiFetch("/api/chat/dm/messages?with=" + encodeURIComponent(currentDMPartner) + "&before=" + dmOldestId);
+      if (!data) return;
+      if (!data.messages.length) {
+        dmHasMoreOlder = false;
+        setLoadOlderState("dm", false);
+        return;
+      }
+      const container = document.getElementById("dm-messages");
+      const anchor = document.getElementById("dm-load-older").nextSibling;
+      const prevScrollHeight = container.scrollHeight;
+      for (const msg of data.messages) {
+        renderMessage(container, msg, myAuthor, "dm", anchor);
+      }
+      dmOldestId = data.messages[0].id;
+      container.scrollTop += container.scrollHeight - prevScrollHeight;
+    } finally {
+      loadingOlderDM = false;
+    }
+  }
+
   // 現在開いているDMスレッドを最初から取得し直す（ブロック解除後の再表示用）
   async function refreshDMMessages() {
     if (!currentDMPartner) return;
     while (pollingDM) await new Promise(r => setTimeout(r, 50));
     dmAfterId = 0;
+    dmOldestId = null;
+    dmHasMoreOlder = true;
     document.getElementById("dm-messages").innerHTML = "";
     await pollDM();
   }
