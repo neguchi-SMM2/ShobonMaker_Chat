@@ -279,6 +279,9 @@
   let cooldownTimer = null;
 
   let nightModeTimer = null;
+  let nightModeActive = false;               // 夜間停止中か（true の間はサーバーと一切通信しない）
+  let nightModeByServer = false;             // サーバーから night_mode を返されて入った場合（端末の時計とずれているとき）
+  let netController = new AbortController(); // 通信中のリクエストを、夜間に入った瞬間にまとめて中断するため
   const CHAT_NIGHT_START_HOUR = 1; // JST
   const CHAT_NIGHT_END_HOUR   = 6; // JST
 
@@ -321,12 +324,22 @@
   }
 
   async function apiFetch(path, options = {}) {
+    // 夜間は例外なく一切通信しない（タイマーや判定の遅れ・競合があっても、ここで必ず止める）
+    if (!networkAllowed()) return null;
     const headers = options.headers || {};
     if (token) headers["Authorization"] = "Bearer " + token;
     if (options.body) headers["Content-Type"] = "application/json";
-    const res = await fetch(API_BASE + path, { ...options, headers });
+    let res;
+    try {
+      res = await fetch(API_BASE + path, { ...options, headers, signal: netController.signal });
+    } catch (e) {
+      if (e && e.name === "AbortError") return null; // 夜間に入ったため中断された
+      throw e;
+    }
     let data = null;
     try { data = await res.json(); } catch (_) {}
+    // 応答を待っている間に夜間に入った場合は、結果を使わずに捨てる（ログアウト等の副作用も起こさない）
+    if (isChatNightModeNow()) { enterNightMode(); return null; }
     if (res.status === 401) {
       doLogout(false);
       showToast("ログインが必要です");
@@ -337,7 +350,7 @@
         showToast("ブロック中の相手にはメッセージを送信できません");
       } else if (data && data.error === "night_mode") {
         showToast("深夜1時〜6時はチャットをご利用いただけません");
-        enterNightMode();
+        enterNightMode(true);
       } else {
         showToast("あなたはチャットを利用できません（BAN中の可能性があります）");
       }
@@ -361,8 +374,25 @@
   }
 
   // ── 夜間停止モード ──
-  function enterNightMode() {
+  // 夜間(JST 1:00〜6:00)は、例外なくサーバーとの通信を一切行わない。
+  //  ・通信の入口(apiFetch / ログイン / ログアウト)で、毎回その場で時刻を見て止める
+  //    （タイマーや画面切り替えの判定が遅れても、競合が起きても、夜間には通信しない）
+  //  ・夜間に入った瞬間に、定期更新のタイマーを全て止め、通信中のリクエストも中断する
+  //  ・夜間の間に返ってきた応答は破棄する
+  /** 通信してよいか。夜間なら false（まだ夜間モードに入っていなければ、ここで入る） */
+  function networkAllowed() {
+    if (!isChatNightModeNow()) return true;
+    if (!nightModeActive) enterNightMode();
+    return false;
+  }
+
+  function enterNightMode(byServer = false) {
+    nightModeActive = true;
+    if (byServer) nightModeByServer = true;
     clearInterval(globalPollTimer); clearInterval(dmPollTimer); clearInterval(dmPartnersPollTimer);
+    // 通信中のリクエストをすべて中断する（以降の通信は新しいcontrollerで行う）
+    netController.abort();
+    netController = new AbortController();
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("chat-screen").classList.add("hidden");
     document.getElementById("night-mode-screen").classList.remove("hidden");
@@ -371,6 +401,8 @@
   }
 
   function exitNightMode() {
+    nightModeActive = false;
+    nightModeByServer = false;
     document.getElementById("night-mode-screen").classList.add("hidden");
     if (token && myAuthor) {
       enterChat();
@@ -379,20 +411,25 @@
     }
   }
 
-  // 1分ごとに夜間モードへの突入・解除をチェックし、リロードなしで自動的に切り替える
+  function checkNightMode() {
+    const isNight = isChatNightModeNow();
+    if (isNight) nightModeByServer = false; // 端末の時計も夜間なら、通常の夜間モードとして扱う
+    if (isNight && !nightModeActive) {
+      enterNightMode();
+    } else if (!isNight && nightModeActive && !nightModeByServer) {
+      exitNightMode();
+    }
+  }
+
+  // 1秒ごと（と、タブが前面に戻ったとき・ページが復帰したとき）に夜間モードへの突入・解除を確認し、
+  // リロードなしで自動的に切り替える。通信の停止そのものは networkAllowed() が保証する。
   function watchNightMode() {
-    let wasNightMode = isChatNightModeNow();
-    if (wasNightMode) enterNightMode();
+    checkNightMode();
     clearInterval(nightModeTimer);
-    nightModeTimer = setInterval(() => {
-      const isNight = isChatNightModeNow();
-      if (isNight && !wasNightMode) {
-        enterNightMode();
-      } else if (!isNight && wasNightMode) {
-        exitNightMode();
-      }
-      wasNightMode = isNight;
-    }, 60 * 1000);
+    nightModeTimer = setInterval(checkNightMode, 1000);
+    document.addEventListener("visibilitychange", checkNightMode);
+    window.addEventListener("focus", checkNightMode);
+    window.addEventListener("pageshow", checkNightMode);
   }
 
   // ── クールタイム（全チャット空間共通・送信ごとに1分） ──
@@ -460,12 +497,20 @@
       document.getElementById("login-error").textContent = "職人名とパスワードを入力してください";
       return;
     }
-    const res = await fetch(API_BASE + "/api/chat/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ author, password }),
-    });
-    const data = await res.json();
+    if (!networkAllowed()) return; // 夜間は通信しない
+    let res, data;
+    try {
+      res = await fetch(API_BASE + "/api/chat/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author, password }),
+        signal: netController.signal,
+      });
+      data = await res.json();
+    } catch (e) {
+      if (e && e.name === "AbortError") return; // 夜間に入ったため中断された
+      throw e;
+    }
     if (!res.ok) {
       const msgs = { not_registered: "職人登録されていません", invalid_password: "パスワードが違います", banned: "あなたはチャットを利用できません" };
       document.getElementById("login-error").textContent = msgs[data.error] || "ログインに失敗しました";
@@ -479,8 +524,9 @@
   }
 
   async function doLogout(callApi = true) {
-    if (callApi && token) {
-      await fetch(API_BASE + "/api/chat/logout", { method: "POST", headers: { "Authorization": "Bearer " + token } }).catch(() => {});
+    // 夜間はサーバーに通信しない（この端末の状態だけを消す）
+    if (callApi && token && !isChatNightModeNow()) {
+      await fetch(API_BASE + "/api/chat/logout", { method: "POST", headers: { "Authorization": "Bearer " + token }, signal: netController.signal }).catch(() => {});
     }
     token = null; myAuthor = null;
     localStorage.removeItem("chat_token");
@@ -523,16 +569,25 @@
   }
 
   async function enterChat() {
+    if (!networkAllowed()) return; // 夜間はチャット画面に入らない（夜間画面のまま）
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("chat-screen").classList.remove("hidden");
     document.getElementById("me-name").textContent = myAuthor;
     globalAfterId = 0;
     document.getElementById("global-messages").innerHTML = "";
     await refreshBlockedList();
+    // 待っている間に夜間に入った場合は、定期更新のタイマーを開始しない
+    if (!networkAllowed()) return;
+    clearInterval(globalPollTimer); clearInterval(dmPartnersPollTimer); clearInterval(dmPollTimer);
     pollGlobal();
     globalPollTimer = setInterval(pollGlobal, 3000);
     pollDMPartners();
     dmPartnersPollTimer = setInterval(pollDMPartners, 5000);
+    // 夜間休止から復帰したときに、開いていたDMスレッドの更新も再開する
+    if (currentDMPartner) {
+      pollDM();
+      dmPollTimer = setInterval(pollDM, 3000);
+    }
   }
 
   // ── タブ切り替え ──
@@ -831,6 +886,7 @@
 
   async function openDM(author) {
     if (!author) return;
+    if (!networkAllowed()) return; // 夜間は通信しない
     currentDMPartner = author;
     dmAfterId = 0;
     dmOldestId = null;
@@ -841,6 +897,9 @@
     updateDMBlockButton();
     clearInterval(dmPollTimer);
     await pollDM();
+    // 待っている間に夜間に入った場合は、定期更新のタイマーを開始しない
+    if (!networkAllowed()) return;
+    clearInterval(dmPollTimer);
     dmPollTimer = setInterval(pollDM, 3000);
     pollDMPartners();
   }
