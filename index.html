@@ -239,6 +239,11 @@
     </main>
   </div>
 
+  <!-- BGM用の隠しプレイヤー枠（画面外。夜間画面に切り替わっても消えない場所に置く） -->
+  <div id="bgm-holder" style="position:fixed;left:-9999px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;">
+    <div id="bgm-player"></div>
+  </div>
+
   <div id="chat-toast"></div>
 
   <!-- ブロック管理パネル -->
@@ -294,6 +299,119 @@
       10
     );
     return jstHour >= CHAT_NIGHT_START_HOUR && jstHour < CHAT_NIGHT_END_HOUR;
+  }
+
+  // ── BGM（2026/10/20 0:50 JST から。チャット画面のみ・夜間は新規再生しない） ──
+  const BGM_VIDEO_ID = "y-abO0PMZAY";
+  const BGM_START_AT = Date.UTC(2026, 9, 19, 15, 50, 0); // 2026/10/20 00:50 JST
+  const BGM_END_AT   = Date.UTC(2026, 9, 19, 16, 0, 0);  // 2026/10/20 01:00 JST（これ以降は新規に再生を始めない）
+  const BGM_FADE_MS  = 6000;   // フェードインの長さ
+  const BGM_WATCHDOG_MS = 10000; // この時間内に再生が始まらなければ諦める
+
+  let bgmState = "idle"; // idle | loading | playing | gave_up
+  let bgmPlayer = null;
+  let bgmFadeTimer = null;
+  let bgmWatchdog = null;
+
+  function isChatScreenVisible() {
+    return !!(token && myAuthor) && !document.getElementById("chat-screen").classList.contains("hidden");
+  }
+
+  function bgmCleanup() {
+    clearInterval(bgmFadeTimer);
+    clearTimeout(bgmWatchdog);
+    try { if (bgmPlayer && bgmPlayer.destroy) bgmPlayer.destroy(); } catch (_) {}
+    bgmPlayer = null;
+    // destroy でプレイヤー用の要素が消えるので、次回用に作り直しておく
+    const holder = document.getElementById("bgm-holder");
+    if (holder && !document.getElementById("bgm-player")) {
+      const d = document.createElement("div");
+      d.id = "bgm-player";
+      holder.appendChild(d);
+    }
+  }
+
+  /** 再生に失敗したら、何も表示せずに諦める（二度と試さない） */
+  function bgmGiveUp() {
+    bgmCleanup();
+    bgmState = "gave_up";
+  }
+
+  /** チャット画面を離れた（ログアウト）ときの停止。次にチャット画面に入れば、時間内なら再度始まる */
+  function bgmStop() {
+    bgmCleanup();
+    bgmState = "idle";
+  }
+
+  function bgmFadeIn() {
+    const startedAt = Date.now();
+    clearInterval(bgmFadeTimer);
+    bgmFadeTimer = setInterval(() => {
+      try {
+        const ratio = Math.min(1, (Date.now() - startedAt) / BGM_FADE_MS);
+        bgmPlayer.setVolume(Math.round(ratio * 100));
+        if (ratio >= 1) clearInterval(bgmFadeTimer);
+      } catch (_) { clearInterval(bgmFadeTimer); }
+    }, 100);
+  }
+
+  function loadYouTubeApi(onReady, onFail) {
+    if (window.YT && window.YT.Player) { onReady(); return; }
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prev === "function") prev();
+      onReady();
+    };
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = onFail;
+    document.head.appendChild(s);
+  }
+
+  function startBgm() {
+    bgmState = "loading";
+    bgmWatchdog = setTimeout(() => { if (bgmState !== "playing") bgmGiveUp(); }, BGM_WATCHDOG_MS);
+    loadYouTubeApi(() => {
+      if (bgmState !== "loading") return; // 読み込み中に諦めた・停止した場合は何もしない
+      try {
+        bgmPlayer = new YT.Player("bgm-player", {
+          width: 200, height: 200,
+          videoId: BGM_VIDEO_ID,
+          playerVars: { autoplay: 1, controls: 0, disablekb: 1, playsinline: 1, rel: 0 },
+          events: {
+            onReady: (e) => {
+              try { e.target.setVolume(0); e.target.playVideo(); } catch (_) { bgmGiveUp(); }
+            },
+            onStateChange: (e) => {
+              // 1 = 再生中。実際に鳴り始めたらフェードインを開始
+              if (e.data === 1 && bgmState === "loading") {
+                bgmState = "playing";
+                clearTimeout(bgmWatchdog);
+                bgmFadeIn();
+              }
+            },
+            onError: bgmGiveUp,
+            onAutoplayBlocked: bgmGiveUp,
+          },
+        });
+      } catch (_) { bgmGiveUp(); }
+    }, bgmGiveUp);
+  }
+
+  /** 1秒ごとに呼ばれる（checkNightMode から） */
+  function bgmCheck() {
+    const night = nightModeActive || isChatNightModeNow();
+    const now = Date.now();
+    if (bgmState === "idle") {
+      // 開始は「時間内」かつ「夜間でない」かつ「チャット画面」のときだけ
+      if (now >= BGM_START_AT && now < BGM_END_AT && !night && isChatScreenVisible()) startBgm();
+    } else if (bgmState === "loading") {
+      // まだ鳴っていないまま夜間に入ったら、始めずに諦める
+      if (night) bgmGiveUp();
+    } else if (bgmState === "playing") {
+      // 再生中は夜間でも止めない。夜間以外でチャット画面を離れた（ログアウト）ときだけ止める
+      if (!night && !isChatScreenVisible()) bgmStop();
+    }
   }
 
   // ── テーマ ──
@@ -421,6 +539,7 @@
     } else if (!isNight && nightModeActive && !nightModeByServer) {
       exitNightMode();
     }
+    bgmCheck(); // BGMの開始・停止判定
   }
 
   // 1秒ごと（と、タブが前面に戻ったとき・ページが復帰したとき）に夜間モードへの突入・解除を確認し、
@@ -530,6 +649,7 @@
     if (callApi && token && !isChatNightModeNow()) {
       await fetch(API_BASE + "/api/chat/logout", { method: "POST", headers: { "Authorization": "Bearer " + token }, signal: netController.signal }).catch(() => {});
     }
+    if (!nightModeActive) bgmStop(); // BGMを停止（夜間休止中に再生中だった場合は止めない）
     token = null; myAuthor = null;
     localStorage.removeItem("chat_token");
     localStorage.removeItem("chat_author");
